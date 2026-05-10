@@ -17,9 +17,9 @@ body {
 }
 #gameContainer {
   position: relative;
-  border: 3px solid #444;
+  border: 3px solid #555;
   border-radius: 6px;
-  box-shadow: 0 0 40px rgba(0,200,0,0.3);
+  box-shadow: 0 0 40px rgba(0,150,0,0.3);
 }
 canvas { display: block; background: #1a1a1a; }
 #ui {
@@ -43,12 +43,15 @@ canvas { display: block; background: #1a1a1a; }
   display: none;
   text-align: center;
   pointer-events: none;
+  background: rgba(0,0,0,0.7);
+  padding: 30px 50px;
+  border-radius: 10px;
 }
-#gameOver span { font-size: 18px; color: #fff; display: block; margin-top: 10px; }
+#gameOver span { font-size: 16px; color: #fff; display: block; margin-top: 10px; }
 #controls {
   position: absolute;
   bottom: 10px; left: 10px;
-  color: #666; font-size: 11px;
+  color: #888; font-size: 11px;
   pointer-events: none;
   line-height: 1.6;
 }
@@ -58,10 +61,10 @@ canvas { display: block; background: #1a1a1a; }
 <div id="gameContainer">
   <canvas id="game"></canvas>
   <div id="ui">
-    <div>🏆 得分: <span id="score">0</span></div>
-    <div>❤️ 生命: <span id="lives">3</span></div>
-    <div>💥 消灭: <span id="kills">0</span></div>
-    <div>🎯 关卡: <span id="level">1</span></div>
+    <div>得分: <span id="score">0</span></div>
+    <div>生命: <span id="lives">3</span></div>
+    <div>消灭: <span id="kills">0</span></div>
+    <div>关卡: <span id="level">1</span></div>
   </div>
   <div id="gameOver">
     GAME OVER
@@ -73,28 +76,32 @@ canvas { display: block; background: #1a1a1a; }
 <script>
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
-const W = 780, H = 580;
+const TILE = 40;
+const COLS = 19, ROWS = 14;
+const W = COLS * TILE, H = ROWS * TILE;
 canvas.width = W; canvas.height = H;
 
-// --- Audio ---
-const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-function playSound(freq, type, duration, vol = 0.08) {
-  const osc = audioCtx.createOscillator();
-  const gain = audioCtx.createGain();
-  osc.type = type; osc.frequency.value = freq;
-  gain.gain.setValueAtTime(vol, audioCtx.currentTime);
-  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
-  osc.connect(gain); gain.connect(audioCtx.destination);
-  osc.start(); osc.stop(audioCtx.currentTime + duration);
+// --- Simple Audio (try/catch for environments without AudioContext) ---
+let audioCtx;
+try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) {}
+function playSound(freq, type, duration, vol = 0.06) {
+  if (!audioCtx) return;
+  try {
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = type; osc.frequency.value = freq;
+    gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+    osc.connect(gain); gain.connect(audioCtx.destination);
+    osc.start(); osc.stop(audioCtx.currentTime + duration);
+  } catch(e) {}
 }
-function sfxShoot() { playSound(200, 'square', 0.12, 0.05); }
-function sfxHit() { playSound(60, 'sawtooth', 0.2, 0.1); }
-function sfxExplode() { playSound(40, 'sawtooth', 0.4, 0.15); }
-function sfxPowerUp() { playSound(600, 'square', 0.15, 0.08); playSound(900, 'square', 0.15, 0.08); }
+function sfxShoot() { playSound(200, 'square', 0.12, 0.04); }
+function sfxHit() { playSound(60, 'sawtooth', 0.2, 0.08); }
+function sfxExplode() { playSound(40, 'sawtooth', 0.4, 0.12); }
+function sfxPowerUp() { playSound(600, 'square', 0.15, 0.06); playSound(900, 'square', 0.15, 0.06); }
 
 // --- Game State ---
-const TILE = 40;
-const COLS = W / TILE, ROWS = H / TILE;
 const DIR = { UP: 0, RIGHT: 1, DOWN: 2, LEFT: 3 };
 const dirDx = [0, 1, 0, -1];
 const dirDy = [-1, 0, 1, 0];
@@ -103,58 +110,59 @@ let score = 0, lives = 3, kills = 0, level = 1;
 let player, enemies = [], bullets = [], walls = [], powerUps = [];
 let keys = {};
 let gameRunning = true, paused = false;
-let enemySpawnTimer = 0, powerUpTimer = 0;
+let enemySpawnTimer = 0;
 let particles = [];
 
+// --- Classes ---
 class Tank {
   constructor(x, y, dir, color, speed, hp = 1) {
     this.x = x; this.y = y; this.dir = dir;
     this.color = color; this.speed = speed;
     this.hp = hp; this.maxHp = hp;
-    this.size = 16;
+    this.size = 14;
     this.cooldown = 0;
     this.fireRate = 40;
     this.alive = true;
     this.flash = 0;
   }
-  getBounds() {
-    return { x: this.x - this.size, y: this.y - this.size, w: this.size * 2, h: this.size * 2 };
-  }
-  draw() {
+  draw(ctx) {
     if (!this.alive) return;
     ctx.save();
     ctx.translate(this.x, this.y);
     ctx.rotate(this.dir * Math.PI / 2);
+    // tracks
+    ctx.fillStyle = '#111';
+    ctx.fillRect(-16, -14, 6, 28);
+    ctx.fillRect(10, -14, 6, 28);
+    // track marks
+    ctx.fillStyle = '#333';
+    for (let i = -12; i < 14; i += 5) {
+      ctx.fillRect(-15, i, 4, 2);
+      ctx.fillRect(11, i, 4, 2);
+    }
     // body
     ctx.fillStyle = this.flash > 0 ? '#fff' : this.color;
-    ctx.fillRect(-16, -13, 32, 26);
-    // tracks
-    ctx.fillStyle = '#222';
-    ctx.fillRect(-18, -15, 6, 30);
-    ctx.fillRect(12, -15, 6, 30);
-    // tread marks
-    ctx.strokeStyle = '#444';
-    ctx.lineWidth = 1;
-    for (let i = -12; i < 16; i += 4) {
-      ctx.beginPath(); ctx.moveTo(-15, i); ctx.lineTo(-12, i); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(15, i); ctx.lineTo(12, i); ctx.stroke();
-    }
+    ctx.fillRect(-10, -12, 20, 24);
     // barrel
-    ctx.fillStyle = '#333';
-    ctx.fillRect(-3, -22, 6, 20);
+    ctx.fillStyle = '#222';
+    ctx.fillRect(-2, -24, 4, 20);
     ctx.fillStyle = this.flash > 0 ? '#fff' : this.color;
-    ctx.fillRect(-2, -22, 4, 18);
-    // turret
-    ctx.beginPath(); ctx.arc(0, 0, 9, 0, Math.PI * 2); ctx.fill();
+    ctx.fillRect(-1.5, -24, 3, 20);
+    // turret (circle on top)
+    ctx.fillStyle = this.flash > 0 ? '#fff' : this.color;
+    ctx.beginPath(); ctx.arc(0, 0, 8, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#000'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(0, 0, 8, 0, Math.PI * 2); ctx.stroke();
+    // center dot
     ctx.fillStyle = '#111';
-    ctx.beginPath(); ctx.arc(0, 0, 5, 0, Math.PI * 2); ctx.fill();
-    // hp bar
+    ctx.beginPath(); ctx.arc(0, 0, 4, 0, Math.PI * 2); ctx.fill();
+    // hp bar (only for multi-hp tanks)
     if (this.maxHp > 1) {
       ctx.rotate(-this.dir * Math.PI / 2);
       ctx.fillStyle = '#400';
-      ctx.fillRect(-14, -20, 28, 4);
+      ctx.fillRect(-14, -18, 28, 3);
       ctx.fillStyle = '#0f0';
-      ctx.fillRect(-14, -20, 28 * this.hp / this.maxHp, 4);
+      ctx.fillRect(-14, -18, 28 * this.hp / this.maxHp, 3);
     }
     ctx.restore();
   }
@@ -164,52 +172,58 @@ class Bullet {
   constructor(x, y, dir, owner) {
     this.x = x; this.y = y; this.dir = dir;
     this.speed = 5; this.owner = owner;
-    this.alive = true; this.size = 3;
+    this.alive = true; this.size = 2;
   }
   update() {
     this.x += dirDx[this.dir] * this.speed;
     this.y += dirDy[this.dir] * this.speed;
-    if (this.x < 0 || this.x > W || this.y < 0 || this.y > H) this.alive = false;
+    if (this.x < 0 || this.x > W || this.y < 0 || this.y > H) { this.alive = false; return; }
     for (const w of walls) {
       if (!w.alive) continue;
-      if (Math.abs(this.x - w.x - TILE/2) < TILE/2 + 3 && Math.abs(this.y - w.y - TILE/2) < TILE/2 + 3) {
+      if (this.x > w.x && this.x < w.x + TILE && this.y > w.y && this.y < w.y + TILE) {
         this.alive = false;
-        if (w.hp) { w.hp--; if (w.hp <= 0) { w.alive = false; spawnParticles(w.x + TILE/2, w.y + TILE/2, '#964B00', 8); } }
+        if (w.hp > 0) { w.hp--; if (w.hp <= 0) { w.alive = false; spawnParticles(w.x + TILE/2, w.y + TILE/2, '#964B00', 10); } }
+        return;
       }
     }
   }
-  draw() {
+  draw(ctx) {
+    if (!this.alive) return;
     ctx.fillStyle = '#ff0';
-    ctx.shadowColor = '#ff0'; ctx.shadowBlur = 6;
-    ctx.beginPath(); ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2); ctx.fill();
+    ctx.shadowColor = '#ff0'; ctx.shadowBlur = 8;
+    ctx.beginPath(); ctx.arc(this.x, this.y, this.size + 1, 0, Math.PI * 2); ctx.fill();
     ctx.shadowBlur = 0;
   }
 }
 
 class PowerUp {
   constructor(x, y, type) {
-    this.x = x; this.y = y; this.type = type; // 'speed','fire','shield','multi'
-    this.alive = true; this.timer = 600;
+    this.x = x; this.y = y;
+    this.type = type;
+    this.alive = true;
+    this.timer = 500;
     this.size = 12;
   }
   update() { this.timer--; if (this.timer <= 0) this.alive = false; }
-  draw() {
-    const colors = { speed: '#0ff', fire: '#f80', shield: '#0f0', multi: '#f0f' };
-    const icons = { speed: '⚡', fire: '🔥', shield: '🛡️', multi: '💠' };
+  draw(ctx) {
+    if (!this.alive) return;
+    const colors = { speed: '#0cf', fire: '#f80', shield: '#0f0', multi: '#f0f' };
+    const labels = { speed: 'S', fire: 'F', shield: 'D', multi: 'M' };
     ctx.fillStyle = colors[this.type];
     ctx.shadowColor = colors[this.type]; ctx.shadowBlur = 10;
     ctx.beginPath(); ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2); ctx.fill();
     ctx.shadowBlur = 0;
-    ctx.fillStyle = '#fff'; ctx.font = '14px sans-serif'; ctx.textAlign = 'center';
-    ctx.fillText(icons[this.type], this.x, this.y + 5);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 12px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(labels[this.type], this.x, this.y);
   }
 }
 
+// --- Helpers ---
 function spawnParticles(x, y, color, count) {
   for (let i = 0; i < count; i++) {
     const a = Math.random() * Math.PI * 2;
-    const s = 1 + Math.random() * 3;
-    particles.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 20 + Math.random() * 20, color });
+    const s = 1 + Math.random() * 4;
+    particles.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 15 + Math.random() * 20, color });
   }
 }
 
@@ -221,77 +235,100 @@ function wallCollide(x, y, size) {
   if (x - size < 0 || x + size > W || y - size < 0 || y + size > H) return true;
   for (const w of walls) {
     if (!w.alive) continue;
-    if (Math.abs(x - w.x - TILE/2) < TILE/2 + size && Math.abs(y - w.y - TILE/2) < TILE/2 + size) return true;
+    if (x + size > w.x && x - size < w.x + TILE && y + size > w.y && y - size < w.y + TILE) return true;
   }
   return false;
 }
 
-function tankCollide(ignore) {
+function tankCollideOther(tank) {
   for (const e of enemies) {
-    if (!e.alive || e === ignore) continue;
-    if (rectCollide(ignore, e)) return true;
+    if (!e.alive || e === tank) continue;
+    if (rectCollide(tank, e)) return true;
   }
-  if (ignore !== player && player.alive && rectCollide(ignore, player)) return true;
+  if (tank !== player && player.alive && rectCollide(tank, player)) return true;
   return false;
 }
 
+// --- Level Generation ---
 function generateLevel() {
   walls = [];
   enemies = [];
   bullets = [];
   powerUps = [];
   particles = [];
-  // border walls
+
+  // Border walls (indestructible)
   for (let x = 0; x < COLS; x++) {
     walls.push({ x: x * TILE, y: 0, w: TILE, h: TILE, alive: true, hp: 0 });
-    walls.push({ x: x * TILE, y: H - TILE, w: TILE, h: TILE, alive: true, hp: 0 });
+    walls.push({ x: x * TILE, y: (ROWS - 1) * TILE, w: TILE, h: TILE, alive: true, hp: 0 });
   }
   for (let y = 1; y < ROWS - 1; y++) {
     walls.push({ x: 0, y: y * TILE, w: TILE, h: TILE, alive: true, hp: 0 });
-    walls.push({ x: W - TILE, y: y * TILE, w: TILE, h: TILE, alive: true, hp: 0 });
+    walls.push({ x: (COLS - 1) * TILE, y: y * TILE, w: TILE, h: TILE, alive: true, hp: 0 });
   }
-  // random obstacles
-  const numBlocks = 20 + level * 5;
+
+  // Random obstacles (avoid spawning near player start)
+  const numBlocks = 25 + level * 5;
+  const playerTileX = 1, playerTileY = 1;
   for (let i = 0; i < numBlocks; i++) {
     const cx = 2 + Math.floor(Math.random() * (COLS - 4));
     const cy = 2 + Math.floor(Math.random() * (ROWS - 4));
-    const cx2 = Math.floor(player.x / TILE), cy2 = Math.floor(player.y / TILE);
-    if (Math.abs(cx - cx2) < 3 && Math.abs(cy - cy2) < 3) continue;
+    // Keep area near player spawn clear
+    if (Math.abs(cx - playerTileX) <= 1 && Math.abs(cy - playerTileY) <= 1) continue;
+    // Don't stack on existing wall
     let dup = false;
     for (const w of walls) {
-      if (Math.abs(w.x / TILE - cx) < 1 && Math.abs(w.y / TILE - cy) < 1) { dup = true; break; }
+      if (w.x === cx * TILE && w.y === cy * TILE) { dup = true; break; }
     }
     if (!dup) {
-      walls.push({ x: cx * TILE, y: cy * TILE, w: TILE, h: TILE, alive: true, hp: Math.random() < 0.3 ? 2 : 1 });
+      walls.push({ x: cx * TILE, y: cy * TILE, w: TILE, h: TILE, alive: true, hp: Math.random() < 0.35 ? 2 : 1 });
     }
   }
-  // player
-  player.x = TILE * 1.5; player.y = TILE * 1.5;
-  player.dir = DIR.DOWN; player.alive = true; player.cooldown = 0;
-  player.speed = 1.8; player.fireRate = 35; player.shield = 0; player.multiShot = false;
-  // spawn enemies
-  enemySpawnTimer = 80;
+
+  // Reset player
+  player.x = TILE + TILE / 2;  // center of tile (1,1)
+  player.y = TILE + TILE / 2;
+  player.dir = DIR.DOWN;
+  player.alive = true;
+  player.cooldown = 0;
+  player.speed = 1.8;
+  player.fireRate = 35;
+  player.shield = 0;
+  player.multiShot = false;
+
+  // Spawn initial enemies
+  enemySpawnTimer = 60;
   for (let i = 0; i < 3 + level; i++) spawnEnemy();
 }
 
 function spawnEnemy() {
-  const sides = [
-    { x: Math.random() * W, y: TILE },
-    { x: Math.random() * W, y: H - TILE },
-    { x: TILE, y: Math.random() * H },
-    { x: W - TILE, y: Math.random() * H },
+  // Spawn from edges but INSIDE the border walls
+  // Left edge: x = TILE + TILE/2 (column 1 center)
+  // Right edge: x = (COLS-2)*TILE + TILE/2
+  // Top edge: y = TILE + TILE/2
+  // Bottom edge: y = (ROWS-2)*TILE + TILE/2
+
+  const margin = TILE + TILE / 2; // 60px from edge - inside border
+  const spawns = [
+    { x: margin + Math.random() * (W - margin * 2), y: margin },
+    { x: margin + Math.random() * (W - margin * 2), y: H - margin },
+    { x: margin, y: margin + Math.random() * (H - margin * 2) },
+    { x: W - margin, y: margin + Math.random() * (H - margin * 2) },
   ];
-  const s = sides[Math.floor(Math.random() * 4)];
-  if (wallCollide(s.x, s.y, 18)) return;
-  const hp = level >= 5 ? (Math.random() < 0.3 ? 2 : 1) : 1;
-  const speed = 0.6 + Math.random() * 0.5 + level * 0.05;
-  const colors = ['#e44', '#f84', '#e4e', '#4af', '#4f4'];
-  enemies.push(new Tank(s.x, s.y, Math.floor(Math.random() * 4), colors[Math.floor(Math.random() * colors.length)], Math.min(speed, 2), hp));
+  const s = spawns[Math.floor(Math.random() * 4)];
+  if (wallCollide(s.x, s.y, Tank.prototype.size)) return;
+
+  const hp = level >= 4 ? (Math.random() < 0.3 ? 2 : 1) : 1;
+  const speed = 0.7 + Math.random() * 0.4 + level * 0.04;
+  const colors = ['#e33', '#f84', '#e4e', '#4af', '#f80', '#e22'];
+  const color = colors[Math.floor(Math.random() * colors.length)];
+  enemies.push(new Tank(s.x, s.y, Math.floor(Math.random() * 4), color, Math.min(speed, 2), hp));
 }
 
+// --- Actions ---
 function fireBullet(tank, owner) {
-  const bx = tank.x + dirDx[tank.dir] * 20;
-  const by = tank.y + dirDy[tank.dir] * 20;
+  const bx = tank.x + dirDx[tank.dir] * (tank.size + 4);
+  const by = tank.y + dirDy[tank.dir] * (tank.size + 4);
   bullets.push(new Bullet(bx, by, tank.dir, owner));
   if (owner === 'player' && player.multiShot) {
     bullets.push(new Bullet(bx, by, (tank.dir + 1) % 4, owner));
@@ -301,15 +338,16 @@ function fireBullet(tank, owner) {
 
 function hitEnemy(enemy) {
   enemy.hp--;
-  enemy.flash = 6;
+  enemy.flash = 5;
   if (enemy.hp <= 0) {
     enemy.alive = false;
     kills++;
     score += 100;
     spawnParticles(enemy.x, enemy.y, enemy.color, 15);
     sfxExplode();
+    // 20% chance to drop power-up
     if (Math.random() < 0.2) {
-      const types = ['speed','fire','shield','multi'];
+      const types = ['speed', 'fire', 'shield', 'multi'];
       powerUps.push(new PowerUp(enemy.x, enemy.y, types[Math.floor(Math.random() * types.length)]));
     }
   } else {
@@ -317,84 +355,100 @@ function hitEnemy(enemy) {
   }
 }
 
-// --- Init ---
-player = new Tank(TILE * 1.5, TILE * 1.5, DIR.DOWN, '#0f0', 1.8);
-generateLevel();
-
-// --- Input ---
-window.addEventListener('keydown', e => {
-  keys[e.key] = true;
-  if (e.key === 'r' || e.key === 'R') { if (!gameRunning) resetGame(); }
-  if (e.key === 'p' || e.key === 'P') { paused = !paused; e.preventDefault(); }
-  if (e.key === ' ' || e.key === 'j' || e.key === 'J') e.preventDefault();
-});
-window.addEventListener('keyup', e => { keys[e.key] = false; });
-
 function resetGame() {
   score = 0; lives = 3; kills = 0; level = 1;
   enemies = []; bullets = []; powerUps = []; particles = [];
-  player = new Tank(TILE * 1.5, TILE * 1.5, DIR.DOWN, '#0f0', 1.8);
   generateLevel();
   gameRunning = true;
   document.getElementById('gameOver').style.display = 'none';
 }
 
+function nextLevel() {
+  level++;
+  player.x = TILE + TILE / 2;
+  player.y = TILE + TILE / 2;
+  player.alive = true;
+  player.shield = 120;  // brief invulnerability
+  player.speed = 1.8;
+  player.fireRate = 35;
+  player.multiShot = false;
+  enemies = []; bullets = []; powerUps = []; particles = [];
+  generateLevel();
+}
+
+// --- Update ---
 function updatePlayer() {
   if (!player.alive) return;
-  let moveX = 0, moveY = 0;
-  if (keys['ArrowUp'] || keys['w'] || keys['W']) moveY = -1;
-  if (keys['ArrowDown'] || keys['s'] || keys['S']) moveY = 1;
-  if (keys['ArrowLeft'] || keys['a'] || keys['A']) moveX = -1;
-  if (keys['ArrowRight'] || keys['d'] || keys['D']) moveX = 1;
+  if (player.flash > 0) player.flash--;
+  if (player.shield > 0) player.shield--;
 
-  if (moveX !== 0 || moveY !== 0) {
-    if (Math.abs(moveX) > 0 && Math.abs(moveY) > 0) { moveX *= 0.707; moveY *= 0.707; }
-    const nx = player.x + moveX * player.speed;
-    const ny = player.y + moveY * player.speed;
+  let mx = 0, my = 0;
+  if (keys['ArrowUp'] || keys['w'] || keys['W']) my = -1;
+  if (keys['ArrowDown'] || keys['s'] || keys['S']) my = 1;
+  if (keys['ArrowLeft'] || keys['a'] || keys['A']) mx = -1;
+  if (keys['ArrowRight'] || keys['d'] || keys['D']) mx = 1;
+
+  if (mx !== 0 || my !== 0) {
+    if (mx !== 0 && my !== 0) { mx *= 0.707; my *= 0.707; }
+    const nx = player.x + mx * player.speed;
+    const ny = player.y + my * player.speed;
     if (!wallCollide(nx, player.y, player.size)) player.x = nx;
     if (!wallCollide(player.x, ny, player.size)) player.y = ny;
-    if (Math.abs(moveX) > Math.abs(moveY)) player.dir = moveX > 0 ? DIR.RIGHT : DIR.LEFT;
-    else if (Math.abs(moveY) > 0) player.dir = moveY > 0 ? DIR.DOWN : DIR.UP;
-    // tank collision
+    // Direction
+    if (Math.abs(mx) > Math.abs(my)) player.dir = mx > 0 ? DIR.RIGHT : DIR.LEFT;
+    else player.dir = my > 0 ? DIR.DOWN : DIR.UP;
+    // Push out of enemy tanks
     for (const e of enemies) {
       if (!e.alive) continue;
       if (rectCollide(player, e)) {
-        player.x -= moveX * player.speed;
-        player.y -= moveY * player.speed;
+        player.x -= mx * player.speed;
+        player.y -= my * player.speed;
       }
     }
   }
+
   if (player.cooldown > 0) player.cooldown--;
   if ((keys[' '] || keys['j'] || keys['J']) && player.cooldown <= 0) {
     fireBullet(player, 'player');
     player.cooldown = player.fireRate;
     sfxShoot();
   }
-  if (player.flash > 0) player.flash--;
 }
 
 function updateEnemies() {
   for (const enemy of enemies) {
     if (!enemy.alive) continue;
     if (enemy.flash > 0) enemy.flash--;
-    // AI
-    if (Math.random() < 0.02) enemy.dir = Math.floor(Math.random() * 4);
+
+    // Randomly change direction
+    if (Math.random() < 0.015) enemy.dir = Math.floor(Math.random() * 4);
+
+    // Move
     const nx = enemy.x + dirDx[enemy.dir] * enemy.speed;
     const ny = enemy.y + dirDy[enemy.dir] * enemy.speed;
-    if (!wallCollide(nx, enemy.y, enemy.size) && !tankCollide(enemy)) enemy.x = nx;
+    if (!wallCollide(nx, enemy.y, enemy.size) && !tankCollideOther(enemy)) enemy.x = nx;
     else enemy.dir = Math.floor(Math.random() * 4);
-    if (!wallCollide(enemy.x, ny, enemy.size) && !tankCollide(enemy)) enemy.y = ny;
+    if (!wallCollide(enemy.x, ny, enemy.size) && !tankCollideOther(enemy)) enemy.y = ny;
     else enemy.dir = Math.floor(Math.random() * 4);
-    // shoot towards player
+
+    // Shooting AI - aim at player when close
     if (enemy.cooldown > 0) enemy.cooldown--;
-    if (enemy.cooldown <= 0) {
-      const dx = player.x - enemy.x, dy = player.y - enemy.y;
+    if (enemy.cooldown <= 0 && player.alive) {
+      const dx = player.x - enemy.x;
+      const dy = player.y - enemy.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist < 300) {
+      if (dist < 350) {
         if (Math.abs(dx) > Math.abs(dy)) enemy.dir = dx > 0 ? DIR.RIGHT : DIR.LEFT;
         else enemy.dir = dy > 0 ? DIR.DOWN : DIR.UP;
-        fireBullet(enemy, 'enemy');
-        enemy.cooldown = 50 + Math.random() * 40;
+        // Add some inaccuracy
+        const offsetDir = (enemy.dir + (Math.random() < 0.3 ? (Math.random() < 0.5 ? 1 : 3) : 0)) % 4;
+        const bullet = new Bullet(
+          enemy.x + dirDx[offsetDir] * (enemy.size + 4),
+          enemy.y + dirDy[offsetDir] * (enemy.size + 4),
+          offsetDir, 'enemy'
+        );
+        bullets.push(bullet);
+        enemy.cooldown = 50 + Math.random() * 50;
       }
     }
   }
@@ -405,27 +459,35 @@ function updateBullets() {
     if (!b.alive) continue;
     b.update();
     if (!b.alive) continue;
+
     if (b.owner === 'player') {
       for (const enemy of enemies) {
         if (!enemy.alive) continue;
         if (Math.abs(b.x - enemy.x) < enemy.size && Math.abs(b.y - enemy.y) < enemy.size) {
-          b.alive = false; hitEnemy(enemy); break;
+          b.alive = false;
+          hitEnemy(enemy);
+          break;
         }
       }
     } else {
-      if (!player.alive) continue;
+      if (!player.alive || player.shield > 0) continue;
       if (Math.abs(b.x - player.x) < player.size && Math.abs(b.y - player.y) < player.size) {
         b.alive = false;
-        if (player.shield > 0) {
-          player.shield--;
-          sfxHit();
+        player.alive = false;
+        spawnParticles(player.x, player.y, '#0f0', 20);
+        sfxExplode();
+        lives--;
+        if (lives <= 0) {
+          gameRunning = false;
         } else {
-          player.alive = false;
-          spawnParticles(player.x, player.y, '#0f0', 20);
-          sfxExplode();
-          lives--;
-          if (lives <= 0) { gameRunning = false; }
-          else { setTimeout(() => { player.alive = true; player.x = TILE * 1.5; player.y = TILE * 1.5; player.shield = 90; }, 1000); }
+          setTimeout(() => {
+            if (gameRunning) {
+              player.alive = true;
+              player.x = TILE + TILE / 2;
+              player.y = TILE + TILE / 2;
+              player.shield = 90;
+            }
+          }, 1500);
         }
       }
     }
@@ -439,12 +501,13 @@ function updatePowerUps() {
     p.update();
     if (!p.alive) continue;
     if (player.alive && Math.abs(p.x - player.x) < 22 && Math.abs(p.y - player.y) < 22) {
-      p.alive = false; sfxPowerUp();
+      p.alive = false;
+      sfxPowerUp();
       switch (p.type) {
-        case 'speed': player.speed = 3; setTimeout(() => player.speed = 1.8, 8000); break;
-        case 'fire': player.fireRate = 15; setTimeout(() => player.fireRate = 35, 8000); break;
-        case 'shield': player.shield = 3; break;
-        case 'multi': player.multiShot = true; setTimeout(() => player.multiShot = false, 8000); break;
+        case 'speed': player.speed = 2.8; setTimeout(() => { if (player.alive) player.speed = 1.8; }, 8000); break;
+        case 'fire':  player.fireRate = 15; setTimeout(() => { if (player.alive) player.fireRate = 35; }, 8000); break;
+        case 'shield': player.shield = player.shield + 180; break; // ~3 seconds
+        case 'multi':  player.multiShot = true; setTimeout(() => { if (player.alive) player.multiShot = false; }, 8000); break;
       }
     }
   }
@@ -456,111 +519,142 @@ function updateParticles() {
   particles = particles.filter(p => p.life > 0);
 }
 
+// --- Draw ---
 function drawWalls() {
   for (const w of walls) {
     if (!w.alive) continue;
     if (w.hp === 0) {
-      ctx.fillStyle = '#555';
+      // Indestructible border
+      ctx.fillStyle = '#444';
       ctx.fillRect(w.x, w.y, TILE, TILE);
-      ctx.strokeStyle = '#333';
-      ctx.lineWidth = 2;
+      ctx.strokeStyle = '#555';
+      ctx.lineWidth = 1;
       ctx.strokeRect(w.x + 1, w.y + 1, TILE - 2, TILE - 2);
+    } else if (w.hp === 1) {
+      // Normal brick
+      ctx.fillStyle = '#a0522d';
+      ctx.fillRect(w.x, w.y, TILE, TILE);
+      ctx.strokeStyle = '#8b4513';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(w.x + 1, w.y + 1, TILE - 2, TILE - 2);
+      // Brick lines
+      ctx.strokeStyle = '#7a3700';
+      ctx.beginPath();
+      ctx.moveTo(w.x, w.y + TILE / 2); ctx.lineTo(w.x + TILE, w.y + TILE / 2);
+      ctx.moveTo(w.x + TILE / 2, w.y); ctx.lineTo(w.x + TILE / 2, w.y + TILE / 2);
+      ctx.stroke();
     } else {
-      ctx.fillStyle = w.hp > 1 ? '#8B4513' : '#964B00';
+      // Harder brick (needs 2 shots)
+      ctx.fillStyle = '#8B4513';
       ctx.fillRect(w.x, w.y, TILE, TILE);
       ctx.strokeStyle = '#654321';
       ctx.lineWidth = 1;
       ctx.strokeRect(w.x + 1, w.y + 1, TILE - 2, TILE - 2);
-      // brick pattern
-      ctx.fillStyle = '#7a3a00';
-      ctx.fillRect(w.x + 4, w.y + TILE/2 - 1, TILE - 8, 2);
     }
   }
 }
 
 function drawParticles() {
   for (const p of particles) {
+    const alpha = p.life / 35;
     ctx.fillStyle = p.color;
-    ctx.globalAlpha = p.life / 40;
+    ctx.globalAlpha = alpha;
     ctx.fillRect(p.x - 2, p.y - 2, 4, 4);
   }
   ctx.globalAlpha = 1;
 }
 
-function drawShield() {
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+
+  // Ground grid
+  ctx.strokeStyle = '#1a2a1a';
+  ctx.lineWidth = 0.5;
+  for (let x = 0; x <= W; x += TILE) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
+  for (let y = 0; y <= H; y += TILE) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+
+  drawWalls();
+  for (const p of powerUps) p.draw(ctx);
+  for (const b of bullets) b.draw(ctx);
+  for (const e of enemies) e.draw(ctx);
+  if (player.alive) player.draw(ctx);
+
+  // Shield effect around player
   if (player.alive && player.shield > 0) {
-    ctx.strokeStyle = '#0ff';
+    ctx.strokeStyle = 'rgba(0,255,255,' + (0.4 + Math.sin(Date.now() / 100) * 0.3) + ')';
     ctx.lineWidth = 3;
-    ctx.shadowColor = '#0ff'; ctx.shadowBlur = 12;
+    ctx.shadowColor = '#0ff'; ctx.shadowBlur = 10;
     ctx.beginPath(); ctx.arc(player.x, player.y, 20, 0, Math.PI * 2); ctx.stroke();
     ctx.shadowBlur = 0;
   }
-}
 
-function nextLevel() {
-  level++;
-  player.x = TILE * 1.5; player.y = TILE * 1.5;
-  player.alive = true; player.shield = 90;
-  player.speed = 1.8; player.fireRate = 35; player.multiShot = false;
-  enemies = []; bullets = []; powerUps = []; particles = [];
-  generateLevel();
+  drawParticles();
+
+  if (paused) {
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#fff';
+    ctx.font = '36px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('暂停中 - P 继续', W / 2, H / 2);
+  }
 }
 
 // --- Main Loop ---
 function update() {
   if (!gameRunning || paused) return;
+
   updatePlayer();
   updateEnemies();
   updateBullets();
   updatePowerUps();
   updateParticles();
+
+  // Cleanup
   enemies = enemies.filter(e => e.alive);
   walls = walls.filter(w => w.alive);
-  // spawn timer
+
+  // Spawn timer
   enemySpawnTimer--;
-  if (enemySpawnTimer <= 0 && enemies.length < 4 + level) {
+  if (enemySpawnTimer <= 0 && enemies.length < 5 + level) {
     spawnEnemy();
-    enemySpawnTimer = 120 + Math.random() * 100;
+    enemySpawnTimer = 100 + Math.random() * 120;
   }
-  // check level complete
-  if (enemies.length === 0 && enemySpawnTimer < 40) {
+
+  // Level complete check
+  if (enemies.length === 0 && enemySpawnTimer < 30) {
     score += 200;
     nextLevel();
   }
-  // update UI
+
+  // Update UI
   document.getElementById('score').textContent = score;
   document.getElementById('lives').textContent = lives;
   document.getElementById('kills').textContent = kills;
   document.getElementById('level').textContent = level;
+
   if (!gameRunning) {
     document.getElementById('gameOver').style.display = 'block';
   }
 }
 
-function draw() {
-  ctx.clearRect(0, 0, W, H);
-  // grid
-  ctx.strokeStyle = '#1a2a1a';
-  ctx.lineWidth = 0.5;
-  for (let x = 0; x < W; x += TILE) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
-  for (let y = 0; y < H; y += TILE) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
-  drawWalls();
-  for (const p of powerUps) { if (p.alive) p.draw(); }
-  for (const b of bullets) { if (b.alive) b.draw(); }
-  for (const e of enemies) e.draw();
-  if (player.alive) player.draw();
-  drawShield();
-  drawParticles();
-  if (paused) {
-    ctx.fillStyle = 'rgba(0,0,0,0.5)';
-    ctx.fillRect(0, 0, W, H);
-    ctx.fillStyle = '#fff'; ctx.font = '40px monospace'; ctx.textAlign = 'center';
-    ctx.fillText('⏸ 暂停中', W/2, H/2);
-  }
-}
+// --- Input ---
+window.addEventListener('keydown', e => {
+  keys[e.key] = true;
+  if ((e.key === 'r' || e.key === 'R') && !gameRunning) resetGame();
+  if (e.key === 'p' || e.key === 'P') { paused = !paused; e.preventDefault(); }
+  if (e.key === ' ' || e.key === 'j' || e.key === 'J') e.preventDefault();
+});
+window.addEventListener('keyup', e => { keys[e.key] = false; });
+
+// --- Init ---
+player = new Tank(TILE + TILE / 2, TILE + TILE / 2, DIR.DOWN, '#3d3', 1.8);
+generateLevel();
 
 function gameLoop() {
-  update(); draw(); requestAnimationFrame(gameLoop);
+  update();
+  draw();
+  requestAnimationFrame(gameLoop);
 }
 gameLoop();
 </script>
